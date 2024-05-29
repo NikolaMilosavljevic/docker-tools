@@ -14,7 +14,6 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
     public class AnnotateEolDigestsOptions : DockerRegistryOptions
     {
         public string EolDigestsListPath { get; set; } = string.Empty;
-        public DateTime? EolDate { get; set; } = DateTime.UtcNow;
         public string? Subscription { get; set; }
         public string? ResourceGroup { get; set; }
 
@@ -34,8 +33,6 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                             "Azure subscription to operate on"),
                         CreateOption<string>("acr-resource-group", nameof(BuildOptions.ResourceGroup),
                             "Azure resource group to operate on"),
-                        CreateOption<DateTime?>("eol-date", nameof(AnnotateEolDigestsOptions.EolDate),
-                            "EOL annotations date (default is today's date)")
                     }
                 );
 

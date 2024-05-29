@@ -3,17 +3,12 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Collections.Generic;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Microsoft.DotNet.ImageBuilder.Models.Image;
-using Microsoft.DotNet.ImageBuilder.ViewModel;
-using static System.Runtime.InteropServices.JavaScript.JSType;
+using Microsoft.DotNet.ImageBuilder.Models.EolAnnotations;
+using Newtonsoft.Json;
 
 #nullable enable
 namespace Microsoft.DotNet.ImageBuilder.Commands
@@ -42,10 +37,8 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
 
         public override async Task ExecuteAsync()
         {
-            if (Options.EolDigestsListPath == null)
-            {
-                throw new ArgumentNullException("EolDigestsListPath is required.");
-            }
+            EolAnnotationsData eolAnnotations = LoadEolAnnotationsData(Options.EolDigestsListPath);
+            DateOnly eolDate = eolAnnotations.EolDate;
 
             RegistryCredentials? credentials = await RegistryCredentialsProvider.GetCredentialsAsync(
                 Manifest.Registry, Manifest.Registry, Options.CredentialsOptions) ?? throw new InvalidOperationException("No credentials found for the registry.");
@@ -56,17 +49,29 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                 {
                     await OrasLogin(credentials);
 
+                    Parallel.ForEach(eolAnnotations.EolDigests, (a) =>
+                    {
+                        AnnotateEolDigest(a.Digest, a.EolDate ?? eolDate);
+                    });
+
                 },
                 credentials,
                 registryName: Manifest.Registry);
 
-            // await OrasLogin();
+        }
 
-            string testDigest = "dotnetdockerdev.azurecr.io/nikolam/test/alpine-3.19@sha256:6457d53fb065d6f250e1504b9bc42d5b6c65941d57532c072d929dd0628977d0";
-            string dateString = DateTime.Today.ToString("yyyy-MM-dd");
+        private static EolAnnotationsData LoadEolAnnotationsData(string eolDigestsListPath)
+        {
+            if (eolDigestsListPath == null)
+            {
+                throw new ArgumentNullException("EolDigestsListPath is required.");
+            }
 
-            AnnotateDigest(dateString, testDigest);
-            WriteSomething();
+            string eolAnnotationsJson = File.ReadAllText(eolDigestsListPath);
+            EolAnnotationsData? eolAnnotations = JsonConvert.DeserializeObject<EolAnnotationsData>(eolAnnotationsJson);
+            return eolAnnotations is null
+                ? throw new JsonException($"Unable to correctly deserialize path '{eolAnnotationsJson}'.")
+                : eolAnnotations;
         }
 
         private async Task OrasLogin(RegistryCredentials credentials)
@@ -85,10 +90,9 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                     process.StandardInput.Close();
                 },
                 Options.IsDryRun);
-
         }
 
-        private void AnnotateDigest(string date, string digest)
+        private void AnnotateEolDigest(string digest, DateOnly date)
         {
             ExecuteHelper.ExecuteWithRetry(
                 "oras",
@@ -99,7 +103,6 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
         protected async Task ExecuteWithSuppliedCredentialsAsync(bool isDryRun, Func<Task> action, RegistryCredentials? credentials, string registryName)
         {
             bool loggedIn = false;
-
 
             if (!string.IsNullOrEmpty(registryName) && credentials is not null)
             {
@@ -118,15 +121,6 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                     DockerHelper.Logout(registryName, isDryRun);
                 }
             }
-        }
-
-        private void WriteSomething()
-        {
-            _loggerService.WriteHeading("Annotations - heading");
-
-            _loggerService.WriteMessage("Some notes about annotations applied.");
-
-            _loggerService.WriteMessage();
         }
     }
 }
