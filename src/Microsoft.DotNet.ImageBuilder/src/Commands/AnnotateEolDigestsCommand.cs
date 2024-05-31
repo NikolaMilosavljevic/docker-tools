@@ -3,9 +3,11 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Concurrent;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.DotNet.ImageBuilder.Models.EolAnnotations;
 using Newtonsoft.Json;
@@ -19,6 +21,8 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
         private readonly IDockerService _dockerService;
         private readonly ILoggerService _loggerService;
         private readonly IProcessService _processService;
+
+        private ConcurrentBag<EolDigestData> _failedAnnotations = new ();
 
         [ImportingConstructor]
         public AnnotateEolDigestsCommand(
@@ -66,6 +70,14 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                 credentials,
                 registryName: Manifest.Registry);
 
+            if (_failedAnnotations.Count > 0)
+            {
+                _loggerService.WriteMessage("JSon file for rerunning failed annotations:");
+                _loggerService.WriteMessage("---");
+                _loggerService.WriteMessage(JsonConvert.SerializeObject(new EolAnnotationsData(DateOnly.FromDateTime(DateTime.Today), [.. _failedAnnotations])));
+                _loggerService.WriteMessage("---");
+                throw new InvalidOperationException($"Failed to annotate {_failedAnnotations.Count} digests for EOL.");
+            }
         }
 
         private static EolAnnotationsData LoadEolAnnotationsData(string eolDigestsListPath)
@@ -117,10 +129,21 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
 
         private void AnnotateEolDigest(string digest, DateOnly date)
         {
-            ExecuteHelper.ExecuteWithRetry(
-                "oras",
-                $"attach --artifact-type application/vnd.microsoft.artifact.lifecycle --annotation \"vnd.microsoft.artifact.lifecycle.end-of-life.date={date}\" {digest}",
-                Options.IsDryRun);
+            try
+            {
+                ExecuteHelper.ExecuteWithRetry(
+                    "oras",
+                    $"attach --artifact-type application/vnd.microsoft.artifact.lifecycle --annotation \"vnd.microsoft.artifact.lifecycle.end-of-life.date={date}\" {digest}",
+                    Options.IsDryRun);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // We do not want to fail immediatelly if one of the annotations fails.
+                // We will capture all failures and log the json data at the end.
+                // Json data can be used to rerun the failed annotations.
+                _failedAnnotations.Add(new EolDigestData { Digest = digest, EolDate = date });
+                _loggerService.WriteMessage($"Failed to annotate EOL for digest '{digest}': {ex.Message}");
+            }
         }
 
         protected async Task ExecuteWithSuppliedCredentialsAsync(bool isDryRun, Func<Task> action, RegistryCredentials? credentials, string registryName)
