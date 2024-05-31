@@ -16,6 +16,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
         public string EolDigestsListPath { get; set; } = string.Empty;
         public string? Subscription { get; set; }
         public string? ResourceGroup { get; set; }
+        public bool AnnotateAlways { get; set; } = false;
 
         public AnnotateEolDigestsOptions() : base()
         {
@@ -29,9 +30,11 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                 .Concat(
                     new Option[]
                     {
-                        CreateOption<string>("acr-subscription", nameof(BuildOptions.Subscription),
+                        CreateOption<bool>("annotate-always", nameof(AnnotateEolDigestsOptions.AnnotateAlways),
+                            "Annotate always, without checking if digest is already annotated for EOL"),
+                        CreateOption<string>("acr-subscription", nameof(AnnotateEolDigestsOptions.Subscription),
                             "Azure subscription to operate on"),
-                        CreateOption<string>("acr-resource-group", nameof(BuildOptions.ResourceGroup),
+                        CreateOption<string>("acr-resource-group", nameof(AnnotateEolDigestsOptions.ResourceGroup),
                             "Azure resource group to operate on"),
                     }
                 );

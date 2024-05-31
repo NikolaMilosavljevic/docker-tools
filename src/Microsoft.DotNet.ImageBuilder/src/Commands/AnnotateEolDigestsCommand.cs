@@ -51,7 +51,15 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
 
                     Parallel.ForEach(eolAnnotations.EolDigests, (a) =>
                     {
-                        AnnotateEolDigest(a.Digest, a.EolDate ?? eolDate);
+                        if (Options.AnnotateAlways || !IsDigestAnnotatedForEol(a.Digest))
+                        {
+                            _loggerService.WriteMessage($"Annotating EOL for digest '{a.Digest}'");
+                            AnnotateEolDigest(a.Digest, a.EolDate ?? eolDate);
+                        }
+                        else
+                        {
+                            _loggerService.WriteMessage($"Digest '{a.Digest}' is already annotated for EOL");
+                        }
                     });
 
                 },
@@ -90,6 +98,21 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                     process.StandardInput.Close();
                 },
                 Options.IsDryRun);
+        }
+
+        private bool IsDigestAnnotatedForEol(string digest)
+        {
+            string? stdOut = ExecuteHelper.ExecuteWithRetry(
+                "oras",
+                $"discover --artifact-type application/vnd.microsoft.artifact.lifecycle {digest}",
+                Options.IsDryRun);
+
+            if (!string.IsNullOrEmpty(stdOut) && stdOut.Contains("Discovered 0 artifact"))
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private void AnnotateEolDigest(string digest, DateOnly date)
