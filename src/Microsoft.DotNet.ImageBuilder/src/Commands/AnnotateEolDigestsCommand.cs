@@ -73,9 +73,9 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             if (_failedAnnotations.Count > 0)
             {
                 _loggerService.WriteMessage("JSon file for rerunning failed annotations:");
-                _loggerService.WriteMessage("---");
+                _loggerService.WriteMessage("");
                 _loggerService.WriteMessage(JsonConvert.SerializeObject(new EolAnnotationsData(DateOnly.FromDateTime(DateTime.Today), [.. _failedAnnotations])));
-                _loggerService.WriteMessage("---");
+                _loggerService.WriteMessage("");
                 throw new InvalidOperationException($"Failed to annotate {_failedAnnotations.Count} digests for EOL.");
             }
         }
@@ -138,7 +138,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             }
             catch (InvalidOperationException ex)
             {
-                // We do not want to fail immediatelly if one of the annotations fails.
+                // We do not want to fail immediatelly if one annotation command fails.
                 // We will capture all failures and log the json data at the end.
                 // Json data can be used to rerun the failed annotations.
                 _failedAnnotations.Add(new EolDigestData { Digest = digest, EolDate = date });
@@ -146,7 +146,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             }
         }
 
-        protected async Task ExecuteWithSuppliedCredentialsAsync(bool isDryRun, Func<Task> action, RegistryCredentials? credentials, string registryName)
+        protected static async Task ExecuteWithSuppliedCredentialsAsync(bool isDryRun, Func<Task> action, RegistryCredentials? credentials, string registryName)
         {
             bool loggedIn = false;
 
