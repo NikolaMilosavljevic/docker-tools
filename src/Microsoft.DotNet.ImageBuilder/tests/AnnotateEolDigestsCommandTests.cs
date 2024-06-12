@@ -14,6 +14,7 @@ using Microsoft.DotNet.ImageBuilder.Models.Image;
 using Microsoft.DotNet.ImageBuilder.Models.Manifest;
 using Microsoft.DotNet.ImageBuilder.Tests.Helpers;
 using Microsoft.DotNet.ImageBuilder.ViewModel;
+using Microsoft.Win32;
 using Moq;
 using Newtonsoft.Json;
 using Xunit;
@@ -37,6 +38,20 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
         {
             using TempFolderContext tempFolderContext = TestHelper.UseTempFolder();
 
+            const string runtimeRelativeDir = "1.0/runtime/os";
+            Directory.CreateDirectory(Path.Combine(tempFolderContext.Path, runtimeRelativeDir));
+            string dockerfileRelativePath = Path.Combine(runtimeRelativeDir, "Dockerfile.custom");
+            File.WriteAllText(Path.Combine(tempFolderContext.Path, dockerfileRelativePath), "FROM repo:tag");
+
+            Manifest manifest = ManifestHelper.CreateManifest(
+                ManifestHelper.CreateRepo("runtime",
+                    ManifestHelper.CreateImage(
+                        ManifestHelper.CreatePlatform(dockerfileRelativePath, new string[] { "tag1", "tag2" })))
+            );
+            manifest.Registry = "mcr.microsoft.com";
+            string manifestPath = Path.Combine(tempFolderContext.Path, "manifest.json");
+            File.WriteAllText(Path.Combine(tempFolderContext.Path, "manifest.json"), JsonConvert.SerializeObject(manifest));
+
             EolAnnotationsData eolAnnotations = new()
             {
                 EolDate = new DateOnly(2022, 1, 1),
@@ -54,21 +69,34 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
             Mock<IDockerService> dockerServiceMock = new();
             Mock<ILoggerService> loggerServiceMock = new();
             Mock<IProcessService> processServiceMock = new();
-
+            Mock< IRegistryCredentialsProvider> registryCredentialsProviderMock = CreateRegistryCredentialsProviderMock();
             AnnotateEolDigestsCommand command = new(
                 dockerServiceMock.Object,
                 loggerServiceMock.Object,
                 processServiceMock.Object,
-                Mock.Of<IRegistryCredentialsProvider>());
+                registryCredentialsProviderMock.Object);
             command.Options.EolDigestsListPath = eolDigestsListPath;
-            command.Options.Subscription = "subscription";
-            command.Options.ResourceGroup = "resource group";
+            command.Options.Subscription = "941d4baa-5ef2-462e-b4b1-505791294610";
+            command.Options.ResourceGroup = "DotnetContainers";
             command.Options.NoCheck = true;
+            command.Options.CredentialsOptions.Credentials.Add("mcr.microsoft.com", new RegistryCredentials("user", "pass"));
+            command.Options.Manifest = manifestPath;
 
+            command.LoadManifest();
             await command.ExecuteAsync();
 
             loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest1'"));
             loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest2'"));
+        }
+
+        private Mock<IRegistryCredentialsProvider> CreateRegistryCredentialsProviderMock()
+        {
+            Mock<IRegistryCredentialsProvider> registryCredentialsProviderMock = new();
+            registryCredentialsProviderMock
+                .Setup(o => o.GetCredentialsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<RegistryCredentialsOptions>()))
+                .ReturnsAsync(new RegistryCredentials("username", "password"));
+
+            return registryCredentialsProviderMock;
         }
     }
 }
