@@ -55,7 +55,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
 
                     Parallel.ForEach(eolAnnotations.EolDigests, (a) =>
                     {
-                        if (Options.AnnotateAlways || !IsDigestAnnotatedForEol(a.Digest))
+                        if (Options.NoCheck || !IsDigestAnnotatedForEol(a.Digest))
                         {
                             _loggerService.WriteMessage($"Annotating EOL for digest '{a.Digest}'");
                             AnnotateEolDigest(a.Digest, a.EolDate ?? eolDate);
