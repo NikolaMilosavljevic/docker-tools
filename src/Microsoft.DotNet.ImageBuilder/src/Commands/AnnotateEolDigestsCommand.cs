@@ -67,7 +67,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                         }
                         else
                         {
-                            _loggerService.WriteMessage($"Digest '{a.Digest}' is already annotated for EOL");
+                            _loggerService.WriteMessage($"Digest '{a.Digest}' is already annotated for EOL.");
                         }
                     });
 
@@ -79,7 +79,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             {
                 _loggerService.WriteMessage("JSon file for rerunning failed annotations:");
                 _loggerService.WriteMessage("");
-                _loggerService.WriteMessage(JsonConvert.SerializeObject(new EolAnnotationsData(DateOnly.FromDateTime(DateTime.Today), [.. _failedAnnotations])));
+                _loggerService.WriteMessage(JsonConvert.SerializeObject(new EolAnnotationsData(globalEolDate, [.. _failedAnnotations])));
                 _loggerService.WriteMessage("");
                 throw new InvalidOperationException($"Failed to annotate {_failedAnnotations.Count} digests for EOL.");
             }

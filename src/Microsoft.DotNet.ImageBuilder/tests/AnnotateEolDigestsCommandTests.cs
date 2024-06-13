@@ -34,10 +34,76 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
         }
 
         [Fact]
-        public async Task AnnotateEolDigestsCommand_NotAlreadyAnnotated_Success()
+        public async Task AnnotateEolDigestsCommand_AnnotationSuccess()
         {
             using TempFolderContext tempFolderContext = TestHelper.UseTempFolder();
 
+            Mock<ILoggerService> loggerServiceMock;
+
+            AnnotateEolDigestsCommand command =
+                InitializeCommand(
+                    tempFolderContext,
+                    out loggerServiceMock,
+                    noCheck: true,
+                    digestAlreadyAnnotated: true,
+                    digestAnnotationIsSuccessful: true);
+            command.LoadManifest();
+            await command.ExecuteAsync();
+
+            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest1', date '6/10/2024'"));
+            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest2', date '1/1/2022'"));
+        }
+
+        [Fact]
+        public async Task AnnotateEolDigestsCommand_AnnotationFailures()
+        {
+            using TempFolderContext tempFolderContext = TestHelper.UseTempFolder();
+
+            Mock<ILoggerService> loggerServiceMock;
+
+            AnnotateEolDigestsCommand command =
+                InitializeCommand(
+                    tempFolderContext,
+                    out loggerServiceMock,
+                    noCheck: true,
+                    digestAlreadyAnnotated: true,
+                    digestAnnotationIsSuccessful: false);
+            command.LoadManifest();
+
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() => command.ExecuteAsync());
+            Assert.StartsWith(
+                $"Failed to annotate 2 digests for EOL.",
+                ex.Message);
+        }
+
+        [Fact]
+        public async Task AnnotateEolDigestsCommand_CheckAnnotations_AlreadyAnnotated()
+        {
+            using TempFolderContext tempFolderContext = TestHelper.UseTempFolder();
+
+            Mock<ILoggerService> loggerServiceMock;
+
+            AnnotateEolDigestsCommand command =
+                InitializeCommand(
+                    tempFolderContext,
+                    out loggerServiceMock,
+                    noCheck: false,
+                    digestAlreadyAnnotated: true,
+                    digestAnnotationIsSuccessful: true);
+            command.LoadManifest();
+            await command.ExecuteAsync();
+
+            loggerServiceMock.Verify(o => o.WriteMessage("Digest 'digest1' is already annotated for EOL."));
+            loggerServiceMock.Verify(o => o.WriteMessage("Digest 'digest2' is already annotated for EOL."));
+        }
+
+        public AnnotateEolDigestsCommand InitializeCommand(
+            TempFolderContext tempFolderContext,
+            out Mock<ILoggerService> loggerServiceMock,
+            bool noCheck = true,
+            bool digestAlreadyAnnotated = true,
+            bool digestAnnotationIsSuccessful = true)
+        {
             const string runtimeRelativeDir = "1.0/runtime/os";
             Directory.CreateDirectory(Path.Combine(tempFolderContext.Path, runtimeRelativeDir));
             string dockerfileRelativePath = Path.Combine(runtimeRelativeDir, "Dockerfile.custom");
@@ -49,8 +115,9 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
                         ManifestHelper.CreatePlatform(dockerfileRelativePath, new string[] { "tag1", "tag2" })))
             );
             manifest.Registry = "mcr.microsoft.com";
+
             string manifestPath = Path.Combine(tempFolderContext.Path, "manifest.json");
-            File.WriteAllText(Path.Combine(tempFolderContext.Path, "manifest.json"), JsonConvert.SerializeObject(manifest));
+            File.WriteAllText(manifestPath, JsonConvert.SerializeObject(manifest));
 
             EolAnnotationsData eolAnnotations = new()
             {
@@ -62,33 +129,25 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
                 }
             };
 
-            string eolAnnotationsJson = JsonConvert.SerializeObject(eolAnnotations);
             string eolDigestsListPath = Path.Combine(tempFolderContext.Path, "eol-digests.json");
-            File.WriteAllText(eolDigestsListPath, eolAnnotationsJson);
+            File.WriteAllText(eolDigestsListPath, JsonConvert.SerializeObject(eolAnnotations));
 
-            Mock<IDockerService> dockerServiceMock = new();
-            Mock<ILoggerService> loggerServiceMock = new();
-            Mock<IProcessService> processServiceMock = new();
-            Mock<IOrasService> orasServiceMock = CreateOrasServiceMock(digestAlreadyAnnotated: false, digestAnnotationSucceeded: true);
+            loggerServiceMock = new();
+            Mock<IOrasService> orasServiceMock = CreateOrasServiceMock(digestAlreadyAnnotated, digestAnnotationIsSuccessful);
             Mock<IRegistryCredentialsProvider> registryCredentialsProviderMock = CreateRegistryCredentialsProviderMock();
             AnnotateEolDigestsCommand command = new(
-                dockerServiceMock.Object,
+                Mock.Of<IDockerService>(),
                 loggerServiceMock.Object,
-                processServiceMock.Object,
+                Mock.Of<IProcessService>(),
                 orasServiceMock.Object,
                 registryCredentialsProviderMock.Object);
             command.Options.EolDigestsListPath = eolDigestsListPath;
             command.Options.Subscription = "941d4baa-5ef2-462e-b4b1-505791294610";
             command.Options.ResourceGroup = "DotnetContainers";
-            command.Options.NoCheck = true;
+            command.Options.NoCheck = noCheck;
             command.Options.CredentialsOptions.Credentials.Add("mcr.microsoft.com", new RegistryCredentials("user", "pass"));
             command.Options.Manifest = manifestPath;
-
-            command.LoadManifest();
-            await command.ExecuteAsync();
-
-            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest1', date '6/10/2024'"));
-            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest2', date '1/1/2022'"));
+            return command;
         }
 
         private Mock<IRegistryCredentialsProvider> CreateRegistryCredentialsProviderMock()
@@ -101,7 +160,7 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
             return registryCredentialsProviderMock;
         }
 
-        private Mock<IOrasService> CreateOrasServiceMock(bool digestAlreadyAnnotated = true, bool digestAnnotationSucceeded = true)
+        private Mock<IOrasService> CreateOrasServiceMock(bool digestAlreadyAnnotated = true, bool digestAnnotationIsSuccessful = true)
         {
             Mock<IOrasService> orasServiceMock = new();
             orasServiceMock
@@ -110,7 +169,7 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
 
             orasServiceMock
                 .Setup(o => o.AnnotateEolDigest(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<ILoggerService>(), It.IsAny<bool>()))
-                .Returns(digestAnnotationSucceeded);
+                .Returns(digestAnnotationIsSuccessful);
 
             return orasServiceMock;
         }
