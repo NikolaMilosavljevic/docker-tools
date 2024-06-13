@@ -34,7 +34,7 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
         }
 
         [Fact]
-        public async Task AnnotateEolDigestsCommand_ExecuteAsync()
+        public async Task AnnotateEolDigestsCommand_NotAlreadyAnnotated_Success()
         {
             using TempFolderContext tempFolderContext = TestHelper.UseTempFolder();
 
@@ -54,11 +54,11 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
 
             EolAnnotationsData eolAnnotations = new()
             {
-                EolDate = new DateOnly(2022, 1, 1),
+                EolDate = new DateOnly(2024, 6, 10),
                 EolDigests = new List<EolDigestData>
                 {
                     new EolDigestData { Digest = "digest1" },
-                    new EolDigestData { Digest = "digest2" }
+                    new EolDigestData { Digest = "digest2", EolDate = new DateOnly(2022, 1, 1) }
                 }
             };
 
@@ -69,11 +69,13 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
             Mock<IDockerService> dockerServiceMock = new();
             Mock<ILoggerService> loggerServiceMock = new();
             Mock<IProcessService> processServiceMock = new();
-            Mock< IRegistryCredentialsProvider> registryCredentialsProviderMock = CreateRegistryCredentialsProviderMock();
+            Mock<IOrasService> orasServiceMock = CreateOrasServiceMock(digestAlreadyAnnotated: false, digestAnnotationSucceeded: true);
+            Mock<IRegistryCredentialsProvider> registryCredentialsProviderMock = CreateRegistryCredentialsProviderMock();
             AnnotateEolDigestsCommand command = new(
                 dockerServiceMock.Object,
                 loggerServiceMock.Object,
                 processServiceMock.Object,
+                orasServiceMock.Object,
                 registryCredentialsProviderMock.Object);
             command.Options.EolDigestsListPath = eolDigestsListPath;
             command.Options.Subscription = "941d4baa-5ef2-462e-b4b1-505791294610";
@@ -85,8 +87,8 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
             command.LoadManifest();
             await command.ExecuteAsync();
 
-            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest1'"));
-            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest2'"));
+            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest1', date '6/10/2024'"));
+            loggerServiceMock.Verify(o => o.WriteMessage("Annotating EOL for digest 'digest2', date '1/1/2022'"));
         }
 
         private Mock<IRegistryCredentialsProvider> CreateRegistryCredentialsProviderMock()
@@ -97,6 +99,20 @@ namespace Microsoft.DotNet.ImageBuilder.Tests
                 .ReturnsAsync(new RegistryCredentials("username", "password"));
 
             return registryCredentialsProviderMock;
+        }
+
+        private Mock<IOrasService> CreateOrasServiceMock(bool digestAlreadyAnnotated = true, bool digestAnnotationSucceeded = true)
+        {
+            Mock<IOrasService> orasServiceMock = new();
+            orasServiceMock
+                .Setup(o => o.IsDigestAnnotatedForEol(It.IsAny<string>(), It.IsAny<bool>()))
+                .Returns(digestAlreadyAnnotated);
+
+            orasServiceMock
+                .Setup(o => o.AnnotateEolDigest(It.IsAny<string>(), It.IsAny<DateOnly>(), It.IsAny<ILoggerService>(), It.IsAny<bool>()))
+                .Returns(digestAnnotationSucceeded);
+
+            return orasServiceMock;
         }
     }
 }

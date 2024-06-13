@@ -11,6 +11,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.DotNet.ImageBuilder.Models.EolAnnotations;
 using Newtonsoft.Json;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 #nullable enable
 namespace Microsoft.DotNet.ImageBuilder.Commands
@@ -21,6 +22,7 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
         private readonly IDockerService _dockerService;
         private readonly ILoggerService _loggerService;
         private readonly IProcessService _processService;
+        private readonly IOrasService _orasService;
 
         private ConcurrentBag<EolDigestData> _failedAnnotations = new ();
 
@@ -29,12 +31,14 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             IDockerService dockerService,
             ILoggerService loggerService,
             IProcessService processService,
+            IOrasService orasService,
             IRegistryCredentialsProvider registryCredentialsProvider)
             : base(registryCredentialsProvider)
         {
             _dockerService = new DockerServiceCache(dockerService ?? throw new ArgumentNullException(nameof(dockerService)));
             _loggerService = loggerService ?? throw new ArgumentNullException(nameof(loggerService));
             _processService = processService ?? throw new ArgumentNullException(nameof(processService));
+            _orasService = orasService ?? throw new ArgumentNullException(nameof(orasService));
         }
 
         protected override string Description => "Annotates EOL digests in Docker Registry";
@@ -42,23 +46,24 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
         public override async Task ExecuteAsync()
         {
             EolAnnotationsData eolAnnotations = LoadEolAnnotationsData(Options.EolDigestsListPath);
-            DateOnly eolDate = eolAnnotations.EolDate;
+            DateOnly globalEolDate = eolAnnotations.EolDate;
 
-            RegistryCredentials? credentials = await RegistryCredentialsProvider.GetCredentialsAsync(
-                Manifest.Registry, Manifest.Registry, Options.CredentialsOptions) ?? throw new InvalidOperationException("No credentials found for the registry.");
-
-            await ExecuteWithSuppliedCredentialsAsync(
+            await ExecuteWithCredentialsAsync(
                 Options.IsDryRun,
                 async () =>
                 {
-                    await OrasLogin(credentials);
-
                     Parallel.ForEach(eolAnnotations.EolDigests, (a) =>
                     {
-                        if (Options.NoCheck || !IsDigestAnnotatedForEol(a.Digest))
+                        if (Options.NoCheck || !_orasService.IsDigestAnnotatedForEol(a.Digest, Options.IsDryRun))
                         {
-                            _loggerService.WriteMessage($"Annotating EOL for digest '{a.Digest}'");
-                            AnnotateEolDigest(a.Digest, a.EolDate ?? eolDate);
+                            DateOnly eolDate = a.EolDate ?? globalEolDate;
+                            _loggerService.WriteMessage($"Annotating EOL for digest '{a.Digest}', date '{eolDate}'");
+                            if (!_orasService.AnnotateEolDigest(a.Digest, eolDate, _loggerService, Options.IsDryRun))
+                            {
+                                // We will capture all failures and log the json data at the end.
+                                // Json data can be used to rerun the failed annotations.
+                                _failedAnnotations.Add(new EolDigestData { Digest = a.Digest, EolDate = eolDate });
+                            }
                         }
                         else
                         {
@@ -67,8 +72,8 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
                     });
 
                 },
-                credentials,
-                registryName: Manifest.Registry);
+                registryName: Manifest.Registry,
+                ownedAcr: Options.RegistryOverride);
 
             if (_failedAnnotations.Count > 0)
             {
@@ -92,81 +97,6 @@ namespace Microsoft.DotNet.ImageBuilder.Commands
             return eolAnnotations is null
                 ? throw new JsonException($"Unable to correctly deserialize path '{eolAnnotationsJson}'.")
                 : eolAnnotations;
-        }
-
-        private async Task OrasLogin(RegistryCredentials credentials)
-        {
-            ProcessStartInfo startInfo = new(
-                "oras", $"login dotnetdockerdev.azurecr.io --username {credentials.Username} --password-stdin")
-            {
-                RedirectStandardInput = true
-            };
-
-            ExecuteHelper.ExecuteWithRetry(
-                startInfo,
-                process =>
-                {
-                    process.StandardInput.WriteLine(credentials.Password);
-                    process.StandardInput.Close();
-                },
-                Options.IsDryRun);
-        }
-
-        private bool IsDigestAnnotatedForEol(string digest)
-        {
-            string? stdOut = ExecuteHelper.ExecuteWithRetry(
-                "oras",
-                $"discover --artifact-type application/vnd.microsoft.artifact.lifecycle {digest}",
-                Options.IsDryRun);
-
-            if (!string.IsNullOrEmpty(stdOut) && stdOut.Contains("Discovered 0 artifact"))
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        private void AnnotateEolDigest(string digest, DateOnly date)
-        {
-            try
-            {
-                ExecuteHelper.ExecuteWithRetry(
-                    "oras",
-                    $"attach --artifact-type application/vnd.microsoft.artifact.lifecycle --annotation \"vnd.microsoft.artifact.lifecycle.end-of-life.date={date}\" {digest}",
-                    Options.IsDryRun);
-            }
-            catch (InvalidOperationException ex)
-            {
-                // We do not want to fail immediatelly if one annotation command fails.
-                // We will capture all failures and log the json data at the end.
-                // Json data can be used to rerun the failed annotations.
-                _failedAnnotations.Add(new EolDigestData { Digest = digest, EolDate = date });
-                _loggerService.WriteMessage($"Failed to annotate EOL for digest '{digest}': {ex.Message}");
-            }
-        }
-
-        protected static async Task ExecuteWithSuppliedCredentialsAsync(bool isDryRun, Func<Task> action, RegistryCredentials? credentials, string registryName)
-        {
-            bool loggedIn = false;
-
-            if (!string.IsNullOrEmpty(registryName) && credentials is not null)
-            {
-                DockerHelper.Login(credentials, registryName, isDryRun);
-                loggedIn = true;
-            }
-
-            try
-            {
-                await action();
-            }
-            finally
-            {
-                if (loggedIn && !string.IsNullOrEmpty(registryName))
-                {
-                    DockerHelper.Logout(registryName, isDryRun);
-                }
-            }
         }
     }
 }
