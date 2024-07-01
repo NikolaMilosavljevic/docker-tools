@@ -27,6 +27,10 @@ jobs:
     value: $(artifactsPath)/imageInfo
   - name: sourceBuildIdOutputDir
     value: $(Build.ArtifactStagingDirectory)/sourceBuildId
+  - name: oldVersionsRepoDir
+    value: $(Build.ArtifactStagingDirectory)/repos/versions.old
+  - name: newVersionsRepoDir
+    value: $(Build.ArtifactStagingDirectory)/repos/versions.new
   - ${{ parameters.customPublishVariables }}
   steps:
   - template: /eng/common/templates/steps/retain-build.yml@self
@@ -104,6 +108,11 @@ jobs:
       dryRunArg: $(dryRunArg)
       condition: and(succeeded(), eq(variables['publishReadme'], 'true'))
   - script: >
+      git clone $(gitHubVersionsRepoInfo.repo) $(oldVersionsRepoDir) -b $(gitHubVersionsRepoInfo.branch)
+    condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
+    displayName: Obtain old Versions repo
+    workingDirectory: $(Build.SourcesDirectory)/ArtifactPacks
+ - script: >
       $(runImageBuilderCmd) publishImageInfo
       '$(imageInfoContainerDir)/image-info.json'
       '$(gitHubVersionsRepoInfo.userName)'
@@ -117,6 +126,20 @@ jobs:
       $(imageBuilder.commonCmdArgs)
     condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
     displayName: Publish Image Info
+  - script: >
+      git clone $(gitHubVersionsRepoInfo.repo) $(newVersionsRepoDir) -b $(gitHubVersionsRepoInfo.branch)
+    condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
+    displayName: Obtain new Versions repo
+    workingDirectory: $(Build.SourcesDirectory)/ArtifactPacks
+ - script: >
+      $(runImageBuilderCmd) generateEolAnnotationData
+      '/repo/eolAnnotationData.json'
+      --old-image-info-path '$(oldVersionsRepoDir)/$(gitHubImageInfoVersionsPath)'
+      --new-image-info-path '$(newVersionsRepoDir)/$(gitHubImageInfoVersionsPath)'
+      $(dryRunArg)
+      $(imageBuilder.commonCmdArgs)
+    condition: and(succeeded(), eq(variables['publishImageInfo'], 'true'))
+    displayName: Generate EOL Annotation Data
   - template: /eng/common/templates/steps/run-imagebuilder.yml@self
     parameters:
       displayName: Ingest Kusto Image Info
